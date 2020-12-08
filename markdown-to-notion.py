@@ -15,9 +15,11 @@ for dir_path, _, filenames in os.walk(os.getenv('SOURCE')):
 
 paths = sorted(paths)
 len_paths = len(paths)
+offset = int(os.getenv('OFFSET', 0))
+paths = paths[offset:]
 
 for n, path in enumerate(paths):
-    print(f'\nProcessing path {n + 1} out of {len_paths}:')
+    print(f'\nProcessing path {n + 1 + offset} out of {len_paths}:')
     print(path)
 
     with open(path, 'r', encoding='utf-8') as mdFile:
