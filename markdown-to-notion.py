@@ -1,11 +1,12 @@
 import os
+import time
 from datetime import datetime
 from notion.block import TextBlock
 from notion.client import NotionClient
 from md2notion.upload import convert, uploadBlock
+from requests import HTTPError
 
-client = NotionClient(token_v2=os.getenv('TOKEN'))
-cv = client.get_collection_view(os.getenv('DESTINATION'))
+API_RETRY_DELAY = 5
 
 paths = []
 
@@ -18,23 +19,45 @@ len_paths = len(paths)
 offset = int(os.getenv('OFFSET', 0))
 paths = paths[offset:]
 
+current_row = None
+error = False
+
 for n, path in enumerate(paths):
-    print(f'\nProcessing path {n + 1 + offset} out of {len_paths}:')
-    print(path)
+    while True:
+        print(f'\nProcessing path {n + 1 + offset} out of {len_paths}:')
+        print(path)
 
-    with open(path, 'r', encoding='utf-8') as mdFile:
-        rendered = convert(mdFile)
-        title = rendered.pop(0).get('title').split('\n', 1)
+        client = NotionClient(token_v2=os.getenv('TOKEN'))
+        cv = client.get_collection_view(os.getenv('DESTINATION'))
 
-        row = cv.collection.add_row()
-        row.date_created = datetime.fromtimestamp(os.stat(os.path.dirname(path)).st_birthtime)
-        row.name = title[0]
+        if current_row and error:
+            print(f'Removing incomplete row {current_row}')
+            current_row.remove()
+            error = False
 
-        if os.getenv('REPORT'):
-            row.report = os.getenv('REPORT')
+        try:
+            with open(path, 'r', encoding='utf-8') as mdFile:
+                rendered = convert(mdFile)
+                title = rendered.pop(0).get('title').split('\n', 1)
 
-        if len(title) == 2:
-            row.children.add_new(TextBlock, title=title[1])
+                row = current_row = cv.collection.add_row()
+                row.date_created = datetime.fromtimestamp(os.stat(os.path.dirname(path)).st_birthtime)
+                row.name = title[0]
 
-        for blockDescriptor in rendered:
-            uploadBlock(blockDescriptor, row, mdFile.name)
+                if os.getenv('REPORT'):
+                    row.report = os.getenv('REPORT')
+
+                if len(title) == 2:
+                    row.children.add_new(TextBlock, title=title[1])
+
+                for blockDescriptor in rendered:
+                    uploadBlock(blockDescriptor, row, mdFile.name)
+
+        except HTTPError as err:
+            print(f'Error: {err}')
+            print(f'Retrying in {API_RETRY_DELAY} seconds...')
+            time.sleep(API_RETRY_DELAY)
+            error = True
+            continue
+
+        break
